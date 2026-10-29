@@ -1,5 +1,7 @@
 """Complete simulation + application startup for the deterministic insertion task.
 
+Author: Steven (https://github.com/sng516157-web) — 2026-10-30
+
 Starts, in order:
   1. Gazebo with sim/insertion.sdf
   2. The combined UR5e + AG95 robot description (xacro + attach_gripper.py)
@@ -187,6 +189,11 @@ def setup(context, *_args, **_kwargs):
                 "/port_cam@sensor_msgs/msg/Image[gz.msgs.Image",
                 "/finger1_pad_contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
                 "/finger2_pad_contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
+                "/finger1_mid_contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
+                "/finger2_mid_contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
+                "/plug_weld/attach@std_msgs/msg/Empty]gz.msgs.Empty",
+                "/plug_weld/detach@std_msgs/msg/Empty]gz.msgs.Empty",
+                "/plug_weld/state@std_msgs/msg/String[gz.msgs.String",
             ],
             parameters=[common],
             output="screen",

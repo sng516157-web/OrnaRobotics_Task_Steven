@@ -1,3 +1,5 @@
+# Author: Steven (https://github.com/sng516157-web) — 2026-10-30
+#
 # Deterministic insertion task parameters.
 # All poses are [x, y, z, roll, pitch, yaw] in the gazebo_world frame unless
 # noted otherwise. These are starting values; tune against the actual model
@@ -19,8 +21,10 @@ deterministic_insertion:
     # original demo script documents the opposite, but physics wins.
     gripper:
       open_position: 0.0
-      close_position: 0.65
+      close_position: 0.63
       settle_time: 1.0
+      # The gripper stops and welds the instant both pads touch the plug, so no
+      # preload is applied.
       # Partial close before the grasp descent: fingertips then pass the
       # housing below its top edge instead of bulldozing it from above.
       pregrasp_position: 0.0
@@ -31,9 +35,10 @@ deterministic_insertion:
       table_pose: [0.15, 0.0, 0.73, 0.0, 0.0, 0.0]
       table_size: [1.10, 0.70, 0.04]
       # Two posts supporting the plug at its ends (gripper closes between them
-      # at the housing, x=0.22; the open middle gives the fingertips clearance
-      # down to the table).
-      stand_a_pose: [0.206, -0.12, 0.765, 0.0, 0.0, 0.0]
+      # at the housing; the open middle gives the fingertips clearance down to
+      # the table). Stand A sits under the boot rear, outside the shifted
+      # grasp band.
+      stand_a_pose: [0.2005, -0.12, 0.765, 0.0, 0.0, 0.0]
       stand_a_size: [0.008, 0.025, 0.03]
       stand_b_pose: [0.231, -0.12, 0.765, 0.0, 0.0, 0.0]
       stand_b_size: [0.008, 0.025, 0.03]
@@ -57,14 +62,20 @@ deterministic_insertion:
     # FINGERTIP grasp — the fingertips (the gripper's lowest point) close on
     # the duplex housing walls at mid-height, so the gripper bulk rides high
     # and clears the table during insertion. Fingertips end ~4cm below the TCP
-    # at close; z≈0.04 puts them at the raised plug (0.785).
-    grasp_in_plug: [-0.001, 0.0, 0.075, 3.14159, 0.0, 1.5708]
+    # at close; z≈0.04 puts them at the raised plug (0.785). z=0.078 keeps the
+    # pad bottoms above the stand tops (0.780) when the pads reach the plug
+    # walls — lower values let the pads bottom out on the stands and the
+    # contact trigger fires on the stand instead of the plug. x is shifted a
+    # few mm toward the cable end so the ~12mm contact band covers the
+    # housing/ boot junction instead of sitting right behind the prongs.
+    grasp_in_plug: [-0.009, 0.0, 0.0775, 3.14159, 0.0, 1.5708]
 
-    # Measured plug-tip pose relative to gripper_tcp after the grasp settles
-    # into the cage (calibrated from Gazebo ground truth over repeated runs;
-    # see README "Tuning"). The deterministic insertion alignment uses this
-    # constant, not live ground truth.
-    tip_in_tcp: [0.0001, -0.0066, 0.0457, 3.09, 0.0, 3.14]
+    # With the detachable-joint weld the plug is carried exactly as grasped,
+    # so this is the analytic relative pose, not a measured dangle:
+    #   tip_in_tcp = [0, 0.01165 - grasp_x, grasp_z, pi/2, 0, pi]
+    # derived from grasp_in_plug and plug_tip_in_plug. Update if you change
+    # grasp_in_plug x or z.
+    tip_in_tcp: [0.0, 0.0207, 0.0775, 1.5708, 0.0, 3.14159]
 
     # Plug box attached to gripper_tcp in the planning scene after grasp:
     # covers the plug tip (the part that enters the port) at the measured

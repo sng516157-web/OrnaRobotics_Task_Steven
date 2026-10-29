@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Steven (https://github.com/sng516157-web) — 2026-10-30
 """Mount the DH AG95 onto a UR arm URDF and make the fingers position-controlled.
 
 Usage: attach_gripper.py ARM.urdf GRIPPER.urdf MESH_DIR [--ros2-control YAML]
@@ -51,7 +52,7 @@ CONTACT_LINKS = (
     "gripper_finger1_finger_tip_link",
     "gripper_finger2_finger_tip_link",
 )
-CONTACT_MU = "10000"
+CONTACT_MU = "100"
 CONTACT_KP = "1000000"
 
 # Gazebo scales URDF colors by 1.25, so these stay grey instead of clamping to white.
@@ -123,7 +124,7 @@ def add_position_controller(root: ET.Element, joint_name: str) -> None:
     )
     ET.SubElement(plugin, "joint_name").text = joint_name
     ET.SubElement(plugin, "topic").text = f"/gripper/{joint_name}"
-    ET.SubElement(plugin, "p_gain").text = "3"
+    ET.SubElement(plugin, "p_gain").text = "8"
     ET.SubElement(plugin, "i_gain").text = "0"
     ET.SubElement(plugin, "d_gain").text = "1.0"
     ET.SubElement(plugin, "cmd_max").text = "2"
@@ -137,24 +138,34 @@ PAD_SENSORS = {
     "gripper_finger1_finger_tip_link": "/finger1_pad_contact",
     "gripper_finger2_finger_tip_link": "/finger2_pad_contact",
 }
+# The plug can also end up cradled against the middle phalanges without the
+# fingertips touching it (a carry the tip sensors then miss entirely, so no
+# weld fires). Contact sensors there too — no visual patch.
+MID_SENSORS = {
+    "gripper_finger1_finger_link": "/finger1_mid_contact",
+    "gripper_finger2_finger_link": "/finger2_mid_contact",
+}
 PATCH_COLOR = "1 0.55 0.1 1"
 
 
-def add_pad_sensor(root: ET.Element, link_name: str, topic: str) -> None:
+def add_pad_sensor(root: ET.Element, link_name: str, topic: str,
+                   patch: bool = True) -> None:
     link = root.find(f"link[@name='{link_name}']")
     if link is None:
         raise SystemExit(f"DH gripper URDF is missing link {link_name}.")
 
-    # Cosmetic thin rectangle on the fingertip's inner contact face (the
-    # distal mesh spans x in [-0.0075, 0.0262]; the inner/contact face is the
-    # +x side, toward the gripper center). No collision geometry.
-    visual = ET.SubElement(link, "visual", {"name": "pad_sensor_patch"})
-    ET.SubElement(visual, "origin", {"xyz": "0.028 0 0.008", "rpy": "0 0 0"})
-    geom = ET.SubElement(visual, "geometry")
-    box = ET.SubElement(geom, "box")
-    ET.SubElement(box, "size").text = "0.003 0.012 0.024"
-    material = ET.SubElement(visual, "material", {"name": "pad_sensor"})
-    ET.SubElement(material, "color", {"rgba": PATCH_COLOR})
+    if patch:
+        # Cosmetic thin rectangle on the fingertip's inner contact face. The
+        # distal mesh spans x in [-0.0075, 0.0262] in the tip link frame, and FK
+        # of the closed gripper puts the -x face of BOTH fingertips on the
+        # gripper centerline (the +x face is the back of the finger) — so the
+        # patch sits just proud of -x. No collision geometry.
+        visual = ET.SubElement(link, "visual", {"name": "pad_sensor_patch"})
+        ET.SubElement(visual, "origin", {"xyz": "-0.009 0 0.024", "rpy": "0 0 0"})
+        geom = ET.SubElement(visual, "geometry")
+        ET.SubElement(geom, "box", {"size": "0.003 0.012 0.024"})
+        material = ET.SubElement(visual, "material", {"name": "pad_sensor"})
+        ET.SubElement(material, "color", {"rgba": PATCH_COLOR})
 
     # Contact sensor bound to the fingertip's collision.
     gazebo = ET.SubElement(root, "gazebo", {"reference": link_name})
@@ -166,6 +177,31 @@ def add_pad_sensor(root: ET.Element, link_name: str, topic: str) -> None:
     contact = ET.SubElement(sensor, "contact")
     ET.SubElement(contact, "collision").text = f"{link_name}_collision"
     ET.SubElement(contact, "topic").text = topic
+
+
+def add_detachable_joint(root: ET.Element) -> None:
+    """Weld the plug to the gripper body once the pad sensors confirm the
+    grasp, release it after insertion. Contact micro-slip at lift-off is a
+    known sim limitation; the detachable joint is the standard answer. The
+    joint captures the current relative pose at attach time, so the plug is
+    carried exactly as grasped (level, on the stands). Parent must be a link
+    that exists after gz-sim's fixed-joint lumping AND is actively driven:
+    gripper_base_link is lumped away, and the fingertip is a passive
+    mimic-driven joint that flops under the plug's load — so weld to the
+    wrist. NOTE: this plugin ATTACHES AT SPAWN by default
+    (attachRequested{true} in its header); the task node detaches once at
+    startup before any arm motion, then re-attaches on grasp."""
+    gazebo = ET.SubElement(root, "gazebo")
+    plugin = ET.SubElement(gazebo, "plugin", {
+        "filename": "gz-sim-detachable-joint-system",
+        "name": "gz::sim::systems::DetachableJoint",
+    })
+    ET.SubElement(plugin, "parent_link").text = "wrist_3_link"
+    ET.SubElement(plugin, "child_model").text = "plug"
+    ET.SubElement(plugin, "child_link").text = "sc_plug_link"
+    ET.SubElement(plugin, "attach_topic").text = "/plug_weld/attach"
+    ET.SubElement(plugin, "detach_topic").text = "/plug_weld/detach"
+    ET.SubElement(plugin, "output_topic").text = "/plug_weld/state"
 
 
 def ensure_world_link(root: ET.Element) -> None:
@@ -303,9 +339,14 @@ def attach(
         ET.SubElement(tag, "mu1").text = CONTACT_MU
         ET.SubElement(tag, "mu2").text = CONTACT_MU
         ET.SubElement(tag, "kp").text = CONTACT_KP
+        ET.SubElement(tag, "kd").text = "100"
 
     for link_name, topic in PAD_SENSORS.items():
         add_pad_sensor(root, link_name, topic)
+    for link_name, topic in MID_SENSORS.items():
+        add_pad_sensor(root, link_name, topic, patch=False)
+
+    add_detachable_joint(root)
 
     if ros2_control is not None:
         add_ros2_control(root, ros2_control)

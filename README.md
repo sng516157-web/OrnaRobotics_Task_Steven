@@ -1,15 +1,17 @@
+<!--
+  Author: Steven (https://github.com/sng516157-web) — 2026-10-30
+-->
 # Cable insertion sim
 
 Gazebo Harmonic scene of a UR5e arm with a DH AG95 gripper that picks up an SC
-plug and inserts it into an SC port. Deterministic waypoint baseline built on
-ROS 2 Jazzy, `gz_ros2_control`, and MoveIt 2.
+plug from a two-post stand and inserts it into an SC port. ROS 2 Jazzy,
+`gz_ros2_control`, MoveIt 2, and a deterministic task state machine with
+contact-sensor grasp confirmation, a detachable-joint grasp weld, and
+weld-time self-calibration for the insertion aim.
 
-> **Current status:** the pipeline works end-to-end through grasp, lift, and
-> transport-to-port with rigorous validation. The final aligned insertion is
-> blocked by a measured physics limitation (the AG95's loose cage lets the
-> plug settle dangling, which cannot align with the horizontal port without
-> the fingers hitting the table). See "Limitations and known issues". This is
-> exactly what the camera + force/torque extensions are meant to address.
+> **Status:** the full pipeline runs end to end — pick, level carry, insert,
+> release, retreat — and prints `Result: SUCCESS` with tip placement within
+> ~2 mm of the port target.
 
 ## Supported environment
 
@@ -17,29 +19,26 @@ ROS 2 Jazzy, `gz_ros2_control`, and MoveIt 2.
 - ROS 2 Jazzy (binary packages)
 - Gazebo Harmonic via `ros_gz`
 
-## Setup
+## Setup (Windows + WSL 2)
 
-From Windows PowerShell, the read-only preflights report environment problems:
+One-time setup. From Windows PowerShell, a read-only environment check:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\preflight_windows.ps1
 ```
 
-```bash
-# inside Ubuntu, before ROS installation
-bash scripts/preflight_wsl.sh --bootstrap
-# after ROS installation
-bash scripts/preflight_wsl.sh --ros
-```
-
-Keep the project in the Linux filesystem — never build under `/mnt/c`:
+Keep two copies of the repo: the **Windows copy** (edit here, git lives here)
+and the **Linux runtime copy** (the sim builds and runs here). Never build
+under `/mnt/c` directly — it is slow and error-prone.
 
 ```bash
+# inside Ubuntu (WSL)
 mkdir -p ~/cable_ws/src
 cp -r /mnt/c/<path-to>/cable-insertion-sim ~/cable_ws/src/
 ```
 
-Install dependencies (also happens automatically on the first `./scripts/sim.sh` run):
+Install dependencies (also happens automatically on the first `./scripts/sim.sh`
+run):
 
 ```bash
 sudo apt install \
@@ -51,12 +50,6 @@ sudo apt install \
   ros-jazzy-trac-ik-kinematics-plugin python3-colcon-common-extensions
 ```
 
-(`ros-jazzy-gz-msgs-vendor` / `ros-jazzy-gz-transport-vendor` provide the
-`gz.msgs10` / `gz.transport13` Python bindings used by the gripper bridge. The
-guide's `python3-gz-msgs10` / `python3-gz-transport13` names only exist in the
-OSRF Gazebo apt repo; with `ros-jazzy-ros-gz` the bindings come from the ROS
-vendor packages.)
-
 Build:
 
 ```bash
@@ -67,35 +60,64 @@ colcon build --symlink-install --parallel-workers 2
 `colcon list` should show only `cable_insertion` (`sim/dh_ag95` is a legacy
 ROS 1 manifest kept for gripper assets and excluded via `COLCON_IGNORE`).
 
-## Run
+### After editing files
+
+Edit the **Windows copy**, then sync it over. Either run
+`scripts/sync-to-wsl.bat` from Windows (edit the path inside if your checkout
+lives elsewhere), or from WSL:
+
+```bash
+rsync -a --delete "/mnt/c/<path-to>/cable-insertion-sim/" ~/cable_ws/src/cable-insertion-sim/
+cd ~/cable_ws && colcon build --symlink-install --parallel-workers 2
+```
+
+With `--symlink-install`, changes to yaml configs, launch files, and Python
+scripts need **no rebuild** — just relaunch. Only `src/deterministic_insertion.cpp`
+(compiled C++) needs `colcon build`.
+
+## Starting the sim
 
 ```bash
 ./scripts/sim.sh                              # GUI + full deterministic task
 ./scripts/sim.sh --cpu                        # software rendering (WSLg fallback)
-./scripts/sim.sh -- start_task:=false         # simulation only
+./scripts/sim.sh -- start_task:=false         # simulation only, no task
 ./scripts/sim.sh -- gui:=false rviz:=false    # headless
-./scripts/sim.sh -- start_task:=false rviz:=true
+./scripts/sim.sh -- rviz:=true                # GUI + RViz with camera feeds
 ```
 
-`scripts/sim.sh` sources `~/cable_ws/install` (override with `CABLE_WS`) and
-ends in `ros2 launch cable_insertion insertion.launch.py`. The launch file
-starts Gazebo, spawns the combined UR5e + AG95 robot at `(-0.15, 0, 0.75)`,
-starts `robot_state_publisher`, the `gazebo_world` → `world` static transform,
-the gz bridges (`/clock`, pose info, port contact), the arm controllers, the
-gripper bridge, `move_group`, and the task node.
+The launch starts Gazebo, spawns the combined UR5e + AG95 robot at
+`(-0.15, 0, 0.75)`, and brings up the bridges, controllers, MoveIt, and the
+task node. Watch the terminal for the state machine (`==> CLOSE_GRIPPER`,
+`Plug welded to gripper`, ... `Result: SUCCESS`).
 
 Choose the arm in `config/arm.env` (`UR_TYPE=ur5e` by default).
 
-For faster tuning iterations against an already-running sim
-(`start_task:=false`), `scripts/run_task.sh` resets the plug and re-runs just
-the task node:
+## Restarting cleanly (important)
+
+Gazebo and ROS topics are shared machine-wide, and a stale process from a
+previous run can reach into a fresh world (this caused real bugs here — e.g. a
+stray weld message attaching the plug in a brand-new sim). **Never run two sims
+at once**, and clean before each start:
 
 ```bash
-./scripts/sim.sh -- gui:=true start_task:=false   # terminal 1
-./scripts/run_task.sh                             # terminal 2
+pkill -9 -f "gz sim"; pkill -9 -f move_group; pkill -9 -f robot_state_publisher
+pkill -9 -f gripper_move; pkill -9 -f parameter_bridge; pkill -9 -f pose_bridge
+pkill -9 -f static_transform; pkill -9 -f spawner; pkill -9 -f deterministic_insertion
+pkill -9 -f "ros2 launch"; pkill -9 -f rviz2; sleep 2
+# verify nothing is left (should print 0):
+ps aux | grep -E "gz sim|ros2 launch|move_group|parameter_bridge" | grep -v grep | wc -l
 ```
 
-## Task sequence
+`sim.sh` already runs this cleanup automatically at every launch — the manual
+version is for checking what was left over. If the Gazebo window shows a black
+viewport or `[WARN:COPY MODE]` in the title, WSLg's GPU state is stale:
+`wsl --shutdown` from PowerShell, then relaunch.
+
+If a run dies early with `Cartesian path fraction ... below required` or
+`pose plan failed after 3 attempts`, that is the known randomized-planner
+flake — the moves retry internally, and a plain relaunch usually passes.
+
+## How the task works
 
 ```text
 START -> OPEN_GRIPPER -> HOME -> PRE_GRASP -> GRASP_APPROACH -> CLOSE_GRIPPER
@@ -103,30 +125,32 @@ START -> OPEN_GRIPPER -> HOME -> PRE_GRASP -> GRASP_APPROACH -> CLOSE_GRIPPER
 -> VALIDATE_INSERTION -> RELEASE -> RETREAT -> HOME -> SUCCESS
 ```
 
-- HOME, PRE_GRASP, PRE_INSERT: MoveIt pose planning (OMPL).
-- Grasp approach, lift, port alignment, insertion, retreat: Cartesian paths
-  (`cartesian_step_size`, minimum path fraction `cartesian_min_fraction: 0.95`).
-- VALIDATE_GRASP: the plug's bridged Gazebo pose must rise by at least 2 cm
-  AND the plug's pose in the gripper (tip relative to `gripper_tcp`) must match
-  the calibrated `tip_in_tcp` constant within `grasp_pose_tolerance`. The plug
-  settles lower in the gripper's cage than the idealized grasp, so it rises
-  less than the commanded lift — the cage-pose check is the meaningful one.
-- VALIDATE_INSERTION: the tip pose (plug model pose ∘ fixed `sc_tip_link`
-  offset) must land within `insertion_pose_tolerance` of the expected inserted
-  pose, or the `sc_port_sensor` contact must fire.
+- HOME, PRE_GRASP, PRE_INSERT: MoveIt pose planning (OMPL, with bounded
+  retries). Grasp approach, lift, port alignment, insertion, retreat:
+  Cartesian paths (also with retries).
+- The plug rests on two 8 mm posts so the long AG95 fingers can close around
+  the housing with the body raised off the table.
+- Fingertip + mid-finger **contact sensors** (orange patches are visual-only
+  markers) detect the grip. On first confirmed contact the gripper stops
+  closing immediately — no over-squeeze — and a gz **detachable joint** welds
+  the plug to `wrist_3_link` at exactly the pose it was grasped in. Sim contact
+  micro-slip makes friction-only carries of a 40 g plug unreliable; the weld is
+  the standard simulation answer. The plugin attaches at spawn by default, so
+  the task node detaches once at startup before anything moves, and a watchdog
+  undoes any weld that did not come from the task node.
+- At the weld instant the task **measures the real plug-tip pose relative to
+  the gripper** (ground truth + TF) and re-aims the insertion with it, so
+  run-to-run grasp nudges stop mattering.
+- The weld is released the moment the insert move finishes; then the gripper
+  opens and the arm retreats.
+- VALIDATE_GRASP: the plug must rise with the lift. VALIDATE_INSERTION: tip
+  within `insertion_pose_tolerance` of the target, or the port contact sensor.
 
-Success output ends with:
+## Cameras
 
-```text
-================ TASK RESULT ================
-Result:        SUCCESS
-Gripper:       open
-Arm at home:   yes
-```
-
-A failure reports the exact state, the MoveIt/controller error if any, the
-measured validation error, and the gripper/arm end state; the node exits
-nonzero.
+Three world cameras (wide workspace, plug stand, port) publish gz image topics
+bridged to ROS as `/wide_cam`, `/plug_cam`, `/port_cam` — view them in RViz
+(`-- rviz:=true`). They are the hook points for perception-based grasping.
 
 ## Frames
 
@@ -140,82 +164,44 @@ nonzero.
 | port body | `sc_port_link`, deterministic pose from config |
 | `sc_port_base_link_entrance` | Port entrance helper frame, fixed offsets in the port model |
 
-The task node requests every motion as a `PoseStamped` in `gazebo_world` and
-transforms to the planning frame via TF2. Gazebo pose ground truth is used only
-for validation.
+## Configuration and tuning
 
-## Configuration
+`config/insertion_task.yaml` holds every task number. The ones you will
+actually touch:
 
-`config/insertion_task.yaml` holds every task number: scene poses, the constant
-SDF-derived transforms (`plug_tip_in_plug`, `port_base_in_port`,
-`entrance_in_port_base`), `insertion_depth`, grasp offset, approach/lift/
-retreat distances, velocity scalings, tolerances, and the ACM allow-list.
+- `grasp_in_plug: [x, y, z, roll, pitch, yaw]` — where the gripper meets the
+  plug, in the plug's frame (plug lies along x: **+x toward the prongs**,
+  −x toward the cable; z is height). The launch log prints the resulting world
+  pose as `pose GRASP (gazebo): xyz=[0.22+x, -0.12+y, 0.785+z]` so you can
+  verify what the sim received. Limits: x no lower than ~−0.008 and z no lower
+  than ~0.075, or the pads bottom out on the stand tops before reaching the
+  plug (you will see `Pad contact not detected` with the plug untouched).
+- `gripper.close_position` — blind close target if contact never fires.
+- `scene.stand_a_pose` / `stand_b_pose` — the two support posts (world frame).
+
 `config/controllers.yaml` holds the arm ros2_control controllers. The gripper
 keeps its own Gazebo joint controllers and the `/gripper_cmd` topic
-(`0.0` open, `0.62` closed — measured on the model: 0.0 spreads the pads
-~9 cm, 0.62 wraps the fingers to ~2 cm; the legacy demo script's comments
-have these backwards).
+(**`0.0` = open, ~`0.63` = closed** — measured on the model; the legacy demo
+script's comments have these backwards).
 
-### Tuning
+## Simulation simplifications and notes
 
-`grasp_in_plug`, `tcp_pose`, and `insertion_depth` are starting values. After
-the first run, check the gripper mount orientation and pad placement in the
-Gazebo GUI (`ros2 run tf2_ros tf2_echo world gripper_tcp` helps) and adjust the
-YAML. If the plug slips during LIFT, the port/plug friction may need `<ode>`
-mu values — DART ignores the `<bullet>` friction blocks in the port model.
-
-**Calibrating `tip_in_tcp`:** the plug settles into the gripper's cage lower
-than the idealized grasp. The task node logs the measured transform at
-VALIDATE_GRASP (ground truth, evaluation only):
-
-```text
-MEASURED tip_in_tcp: xyz=[...] rpy=[...]
-```
-
-Run a few times, average the values, and put them in `tip_in_tcp` in
-`config/insertion_task.yaml`. The insertion alignment uses that calibrated
-constant, so the port targets stay correct despite the cage settling.
-
-## Simulation simplifications and scene notes
-
-- `attach_gripper.py` disables gravity on every link and adds joint damping to
-  the arm so the unactuated-by-default setup stays stable; the arm is driven by
+- `attach_gripper.py` disables gravity on every robot link and adds joint
+  damping so the unactuated-by-default setup stays stable; the arm is driven by
   `gz_ros2_control` trajectories.
-- The planning scene contains a simplified port collision box (a thin base
-  plate) and the plug stand; the attached plug is ACM-allowed against them.
-- The plug rests on a narrow stand (`plug_stand`, 15×25×30 mm at
-  `(0.22, -0.12)`) raising it 3 cm off the table. The AG95's finger links are
-  10–16 cm long, so a 7 mm-tall plug lying flat on the table cannot be wrapped
-  — the fingertips would have to pass below the table surface. The stand gives
-  the fingers room to close around the housing. (Verified from the sim: the
-  closed cage holds the plug reliably once it is inside.)
-- The gripper command mapping on the real model is **`0.0` = open, `0.62` =
-  closed** (the legacy `gripper_move.py` comment block says the opposite).
-- Fixed initial plug/port poses; no vision, no force control.
-
-## Limitations and known issues
-
-- Deterministic poses only; no vision, no force feedback; simplified physics
-  (gravity disabled on the robot).
-- **Insertion is the current blocker.** The grasp+lift reliably capture the
-  plug, but the AG95's loose wrap lets the 40 g plug settle dangling
-  *vertically* in the cage (measured `tip_in_tcp` repeats to ~0.2 mm but the
-  orientation is vertical and varies a few degrees run to run). The SC port's
-  entrance faces −y (horizontal), so a dangling plug cannot be aligned with it
-  without the long fingers colliding with the table. The task fails cleanly at
-  PORT_ALIGN/INSERT with a full report. Making this work needs a firmer,
-  orientation-stable hold — that is exactly what the extension roadmap's
-  camera (measure the real grasp pose) and force/torque sensing (guided
-  insertion) are for.
+- The planning scene contains the table, a simplified port collision box, and
+  the two stands; the fingers are ACM-allowed against them.
+- The plug is carried by the detachable-joint weld, not by friction — see
+  "How the task works". The port contact sensor does not currently fire at the
+  12 mm insertion depth; validation falls back on tip position.
+- Deterministic poses; no perception-driven grasping yet (cameras are in place).
 
 ## Extension roadmap
 
-1. Wrist RGB-D camera → replace `scene.plug_pose` / `scene.port_pose` (keep the
-   deterministic poses as fallback).
-2. Gripper-pad contact sensors → contact-based grasp validation.
-3. Wrist force/torque sensor → force limits and guided final insertion.
-4. BehaviorTree.CPP or MoveIt Task Constructor for recovery — only if the
-   baseline demonstrates the need.
+1. Wrist/world cameras → replace `scene.plug_pose` / `scene.port_pose` (keep
+   the deterministic poses as fallback). Camera feeds are already bridged.
+2. BehaviorTree.CPP or MoveIt Task Constructor for recovery behaviors.
+3. Force/torque-guided final insertion.
 
 ## Layout
 
@@ -223,14 +209,17 @@ constant, so the port targets stay correct despite the cage settling.
 config/arm.env              which UR arm to spawn
 config/controllers.yaml     arm ros2_control controllers
 config/insertion_task.yaml  task poses, distances, speeds, tolerances
+config/cable_insertion.rviz RViz camera layout
 launch/insertion.launch.py  complete startup (sim + MoveIt + task)
 moveit_config/              SRDF, kinematics, joint limits, controllers
 src/deterministic_insertion.cpp  task state machine
-scripts/sim.sh              install deps, launch everything (--cpu fallback)
+scripts/sim.sh              clean stale processes, install deps, launch
+scripts/sync-to-wsl.bat     Windows -> WSL repo sync + rebuild helper
 scripts/preflight_*.ps1/sh  read-only environment checks
-sim/insertion.sdf           table, plug, port, contact system
+sim/insertion.sdf           table, plug, port, stands, cameras, contact system
 sim/models/                 SC plug and SC port meshes
-sim/dh_ag95/                DH AG95 meshes, wrist mount, gripper bridge
+sim/dh_ag95/                DH AG95 meshes, wrist mount, gripper bridge,
+                            attach_gripper.py (URDF merge, sensors, weld plugin)
 ```
 
 ## License

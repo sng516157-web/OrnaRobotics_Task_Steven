@@ -1,3 +1,5 @@
+// Author: Steven (https://github.com/sng516157-web) — 2026-10-30
+//
 // Deterministic UR5e + DH AG95 SC plug insertion task.
 //
 // State machine:
@@ -10,6 +12,7 @@
 // bridged from Gazebo are used ONLY for validation, never for commanding
 // motion. All numbers come from config/insertion_task.yaml.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <map>
@@ -29,7 +32,9 @@
 #include <moveit_msgs/msg/planning_scene.hpp>
 #include <ros_gz_interfaces/msg/contacts.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -176,6 +181,8 @@ class DeterministicInsertion : public rclcpp::Node {
     move_group_wait_ = declare_parameter<double>("startup.move_group_wait", 30.0);
 
     gripper_pub_ = create_publisher<std_msgs::msg::Float64>(gripper_topic_, 10);
+    weld_attach_pub_ = create_publisher<std_msgs::msg::Empty>("/plug_weld/attach", 10);
+    weld_detach_pub_ = create_publisher<std_msgs::msg::Empty>("/plug_weld/detach", 10);
     pose_sub_ = create_subscription<tf2_msgs::msg::TFMessage>(
         pose_topic_, 10,
         [this](const tf2_msgs::msg::TFMessage::SharedPtr msg) { onPoseInfo(*msg); });
@@ -183,15 +190,43 @@ class DeterministicInsertion : public rclcpp::Node {
         contact_topic_, 10,
         [this](const ros_gz_interfaces::msg::Contacts::SharedPtr) { contact_seen_ = true; });
     // Gripper pad contact sensors: the gripper "knowing" it has the plug.
+    // Count only contacts with the plug itself — the pads can also bottom out
+    // on the stand tops, which must NOT satisfy the grasp trigger.
+    auto pad_cb = [this](double& last) {
+      return [this, &last](const ros_gz_interfaces::msg::Contacts::SharedPtr msg) {
+        for (const auto& c : msg->contacts) {
+          if (c.collision1.name.find("plug") != std::string::npos ||
+              c.collision2.name.find("plug") != std::string::npos) {
+            last = now().seconds();
+            break;
+          }
+        }
+      };
+    };
     pad1_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
-        "/finger1_pad_contact", 10,
-        [this](const ros_gz_interfaces::msg::Contacts::SharedPtr) {
-          pad1_last_contact_ = now().seconds();
-        });
+        "/finger1_pad_contact", 10, pad_cb(pad1_last_contact_));
     pad2_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
-        "/finger2_pad_contact", 10,
-        [this](const ros_gz_interfaces::msg::Contacts::SharedPtr) {
-          pad2_last_contact_ = now().seconds();
+        "/finger2_pad_contact", 10, pad_cb(pad2_last_contact_));
+    // Middle-phalanx sensors cover the cradle-carry case (plug held without
+    // the fingertips touching it); they feed the same per-side timestamps.
+    mid1_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
+        "/finger1_mid_contact", 10, pad_cb(pad1_last_contact_));
+    mid2_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
+        "/finger2_mid_contact", 10, pad_cb(pad2_last_contact_));
+    // Phantom-weld guard: gz/ROS topics are shared machine-wide, and a stale
+    // process from a previous run can weld the plug in THIS world (observed:
+    // plug rigidly following the arm from startup with zero contact). If the
+    // weld reports "attached" and it wasn't us, undo it immediately.
+    weld_state_sub_ = create_subscription<std_msgs::msg::String>(
+        "/plug_weld/state", 10,
+        [this](const std_msgs::msg::String::SharedPtr msg) {
+          if (msg->data == "attached" && !welded_by_us_) {
+            RCLCPP_WARN(get_logger(),
+                        "Phantom plug weld detected (not from this task node) — detaching.");
+            weld_detach_pub_->publish(std_msgs::msg::Empty());
+          } else if (msg->data == "detached" && welded_by_us_) {
+            welded_by_us_ = false;
+          }
         });
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
@@ -211,6 +246,11 @@ class DeterministicInsertion : public rclcpp::Node {
     enter(State::kOpenGripper);
     publishGripper(gripper_open_);
     gripper_closed_ = false;
+    // The DetachableJoint plugin attaches AT SPAWN by default (its
+    // attachRequested member defaults to true). Undo that startup weld before
+    // the arm moves; we re-attach on grasp confirm.
+    weld_detach_pub_->publish(std_msgs::msg::Empty());
+    RCLCPP_INFO(get_logger(), "Released the plugin's default spawn weld.");
 
     mgi_ = std::make_unique<MoveGroupInterface>(
         shared_from_this(), MoveGroupInterface::Options("arm"),
@@ -315,17 +355,29 @@ class DeterministicInsertion : public rclcpp::Node {
     enter(State::kInsert);
     if (!moveCartesian(inserted_tcp_, insertion_scaling_))
       return fail(State::kInsert, "Insertion failed: " + last_error_);
+    // Free the plug the instant the insert move finishes: a welded plug
+    // fighting the port contact jitters during validation/release. Redundant
+    // publishes in case one is dropped.
+    for (int k = 0; k < 3; ++k) {
+      weld_detach_pub_->publish(std_msgs::msg::Empty());
+      rclcpp::sleep_for(50ms);
+    }
+    welded_by_us_ = false;
+    RCLCPP_INFO(get_logger(), "Plug weld released at insert completion.");
 
     enter(State::kValidateInsertion);
     if (!validateInsertion())
       return fail(State::kValidateInsertion, last_error_);
 
     enter(State::kRelease);
+    // Detach the weld BEFORE opening: the weld's parent is the finger1 tip
+    // link (a moving link), so opening while welded would drag the plug.
+    detachPlug();
+    rclcpp::sleep_for(200ms);
     publishGripper(gripper_open_);
     gripper_closed_ = false;
     rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::duration<double>(gripper_settle_)));
-    detachPlug();
 
     enter(State::kRetreat);
     if (!moveCartesian(retreat_tcp_, approach_scaling_))
@@ -519,6 +571,10 @@ class DeterministicInsertion : public rclcpp::Node {
   }
 
   void detachPlug() {
+    // The weld is normally released at insert completion; this is a no-op
+    // safety re-publish plus the planning-scene cleanup.
+    weld_detach_pub_->publish(std_msgs::msg::Empty());
+    RCLCPP_INFO(get_logger(), "Plug weld released (safety re-publish).");
     moveit_msgs::msg::AttachedCollisionObject attached;
     attached.link_name = tcp_frame_;
     attached.object.id = "plug";
@@ -597,8 +653,18 @@ class DeterministicInsertion : public rclcpp::Node {
   bool moveCartesian(const tf2::Transform& target_gz, double scaling) {
     std::vector<geometry_msgs::msg::Pose> waypoints{toPlanningFrame(target_gz)};
     moveit_msgs::msg::RobotTrajectory trajectory;
-    const double fraction = mgi_->computeCartesianPath(
-        waypoints, cartesian_step_, trajectory);
+    // Cartesian IK is occasionally flaky partway down; retry a few times like
+    // moveToPose does (planning only, never a blind re-execution).
+    double fraction = 0.0;
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+      mgi_->setStartStateToCurrentState();
+      fraction = mgi_->computeCartesianPath(waypoints, cartesian_step_, trajectory);
+      if (fraction >= cartesian_min_fraction_) break;
+      RCLCPP_WARN(get_logger(),
+                  "Cartesian path fraction %.3f below %.3f (attempt %d/3)",
+                  fraction, cartesian_min_fraction_, attempt);
+      rclcpp::sleep_for(500ms);
+    }
     if (fraction < cartesian_min_fraction_) {
       last_error_ = "Cartesian path fraction " + std::to_string(fraction) +
                     " below required " + std::to_string(cartesian_min_fraction_);
@@ -643,27 +709,37 @@ class DeterministicInsertion : public rclcpp::Node {
   }
 
   // Ramp the close in small steps so the plug self-centers between the pads.
-  // Stop as soon as BOTH pad sensors report persistent contact: the gripper
-  // then holds exactly that much close instead of squeezing past the grip
-  // (no integral windup + contact-triggered stop = no over-grip).
+  // The instant BOTH pad sensors report plug contact, weld and hold exactly
+  // this position — no extra step, no preload (the weld carries the plug).
   void closeGripperGradual() {
     const double from = pregrasp_gripper_;
     const double to = gripper_close_;
-    const int steps = 10;
-    int both_hits = 0;
+    const int steps = 20;
     for (int i = 1; i <= steps; ++i) {
       const double c = from + (to - from) * i / steps;
       publishGripper(c);
       rclcpp::sleep_for(400ms);
-      both_hits = bothPadsTouching() ? both_hits + 1 : 0;
-      if (both_hits >= 2) {
+      if (bothPadsTouching()) {
         RCLCPP_INFO(get_logger(),
-                    "Both pads in contact at c=%.2f; holding grip (contact-triggered stop).",
-                    c);
+                    "Both pads in contact at c=%.2f; welding and holding (no preload).", c);
+        welded_by_us_ = true;
+        weld_attach_pub_->publish(std_msgs::msg::Empty());
+        RCLCPP_INFO(get_logger(), "Plug welded to gripper (detachable joint).");
+        calibrateGraspAtWeld();
         return;
       }
     }
     RCLCPP_INFO(get_logger(), "Pad contact not detected; closed fully to %.2f.", to);
+    // Fallback: the plug may be cradled against a non-tip link. If any finger
+    // sensor saw the plug, it is physically in the cage — weld it.
+    const double t = now().seconds();
+    if ((t - pad1_last_contact_) < 0.5 || (t - pad2_last_contact_) < 0.5) {
+      welded_by_us_ = true;
+      weld_attach_pub_->publish(std_msgs::msg::Empty());
+      RCLCPP_WARN(get_logger(),
+                  "Tip pads missed, but a finger link is touching the plug; welding anyway.");
+      calibrateGraspAtWeld();
+    }
   }
 
   // ---- validation ------------------------------------------------------------
@@ -713,8 +789,37 @@ class DeterministicInsertion : public rclcpp::Node {
     return true;
   }
 
+  // Self-calibration: measure the true plug-tip pose in the TCP frame at the
+  // moment of welding and re-aim the insertion with it. The ramp nudges the
+  // plug a few mm on the stands; aiming with the nominal constant misses the
+  // port by that much.
+  void calibrateGraspAtWeld() {
+    if (!modelPose("plug")) {
+      RCLCPP_WARN(get_logger(),
+                  "Weld-time calibration failed (no plug pose); keeping nominal tip_in_tcp.");
+      return;
+    }
+    const tf2::Transform measured = measuredTipInTcp();
+    const double len = measured.getOrigin().length();
+    if (len < 0.005 || len > 0.20) {
+      RCLCPP_WARN(get_logger(),
+                  "Weld-time calibration implausible (%.3f m); keeping nominal tip_in_tcp.", len);
+      return;
+    }
+    double r, pi, y;
+    measured.getBasis().getRPY(r, pi, y);
+    RCLCPP_INFO(get_logger(),
+                "Calibrated at weld: tip_in_tcp xyz=[%.4f, %.4f, %.4f] rpy=[%.3f, %.3f, %.3f] "
+                "(nominal was xyz=[%.4f, %.4f, %.4f])",
+                measured.getOrigin().x(), measured.getOrigin().y(), measured.getOrigin().z(),
+                r, pi, y,
+                tip_in_tcp_.getOrigin().x(), tip_in_tcp_.getOrigin().y(), tip_in_tcp_.getOrigin().z());
+    tip_in_tcp_ = measured;
+    computeTaskPoses();  // re-aim insertion poses with the measured transform
+  }
+
   // Measured plug-tip pose in the TCP frame from Gazebo ground truth + TF.
-  // Evaluation only; never used to command motion.
+  // Used for validation and for the weld-time insertion re-aim.
   tf2::Transform measuredTipInTcp() {
     auto plug = modelPose("plug");
     if (!plug) return tf2::Transform::getIdentity();
@@ -831,10 +936,15 @@ class DeterministicInsertion : public rclcpp::Node {
 
   // ROS interfaces
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr gripper_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr weld_attach_pub_, weld_detach_pub_;
   rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr pose_sub_;
   rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr contact_sub_;
   rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr pad1_sub_;
   rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr pad2_sub_;
+  rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr mid1_sub_;
+  rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr mid2_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr weld_state_sub_;
+  bool welded_by_us_ = false;
   double pad1_last_contact_ = -100.0;
   double pad2_last_contact_ = -100.0;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Steven (https://github.com/sng516157-web) — 2026-10-30
 # Install ROS 2 Jazzy dependencies if needed, then launch the deterministic
 # insertion simulation: Gazebo Harmonic + UR5e + AG95 + MoveIt + task node.
 #
@@ -129,6 +130,14 @@ fi
 if [[ "$CPU" == true ]]; then
   export LIBGL_ALWAYS_SOFTWARE=1
 fi
+
+# Kill leftovers from previous runs first: gz/ROS topics are shared
+# machine-wide, and a stale task node or bridge can weld the plug (or command
+# the gripper) in a FRESH world. This bit us hard; never run two at once.
+echo "Cleaning up any previous sim processes..."
+pkill -f "gz sim" 2>/dev/null || true
+pkill -f "move_group|robot_state_publisher|gripper_move|parameter_bridge|pose_bridge|static_transform|spawner|deterministic_insertion|ros2 launch|rviz2" 2>/dev/null || true
+sleep 2
 
 echo "Launching cable insertion simulation (arm: ${UR_TYPE})."
 echo "Useful variants:"
