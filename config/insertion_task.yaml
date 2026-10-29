@@ -1,0 +1,153 @@
+# Deterministic insertion task parameters.
+# All poses are [x, y, z, roll, pitch, yaw] in the gazebo_world frame unless
+# noted otherwise. These are starting values; tune against the actual model
+# geometry (see README, "Tuning").
+deterministic_insertion:
+  ros__parameters:
+    frames:
+      gazebo_world: "gazebo_world"
+      planning: "world"
+      tcp: "gripper_tcp"
+
+    topics:
+      gripper_cmd: "/gripper_cmd"
+      pose_info: "/world/insertion/pose/info_named"
+      port_contact: "/world/insertion/model/port/link/sc_port_link/sensor/sc_port_sensor/contact"
+
+    # NOTE: measured on the actual model, 0.0 opens the AG95 (finger pads
+    # spread ~9 cm) and 0.62 closes/wraps it (tips converge to ~2 cm). The
+    # original demo script documents the opposite, but physics wins.
+    gripper:
+      open_position: 0.0
+      close_position: 0.65
+      settle_time: 1.0
+      # Partial close before the grasp descent: fingertips then pass the
+      # housing below its top edge instead of bulldozing it from above.
+      pregrasp_position: 0.0
+
+    scene:
+      plug_pose: [0.22, -0.12, 0.785, 0.0, 0.0, 0.0]
+      port_pose: [0.50, 0.12, 0.76, 0.0, 0.0, 0.0]
+      table_pose: [0.15, 0.0, 0.73, 0.0, 0.0, 0.0]
+      table_size: [1.10, 0.70, 0.04]
+      # Narrow stand raising the plug so the AG95's fingers can wrap it.
+      stand_pose: [0.22, -0.12, 0.765, 0.0, 0.0, 0.0]
+      stand_size: [0.015, 0.025, 0.03]
+      # Simplified collision box for the port body (NOT the opening the plug
+      # enters; the attached plug is ACM-allowed against it during insertion).
+      # A thin plate at the base so the approach to the entrance stays clear.
+      port_box_pose: [0.50, 0.12, 0.755, 0.0, 0.0, 0.0]
+      port_box_size: [0.03, 0.028, 0.004]
+
+    # Constant transforms measured from sim/models/*/model.sdf.
+    # Plug body frame -> plug tip frame (sc_tip_joint in sc_plug/model.sdf).
+    plug_tip_in_plug: [0.01165, 0.0, 0.0, -1.5708, 0.0, -1.5708]
+    # Port body -> port base frame -> entrance frame
+    # (sc_port_base_joint / sc_port_base_entrance_joint in sc_port/model.sdf).
+    port_base_in_port: [0.0, -0.002, 0.0, 1.5708, 3.14159, 0.0]
+    entrance_in_port_base: [0.0, 0.0, -0.01564, 0.0, 0.0, 0.0]
+    # Insertion advances the tip along the entrance frame +Z axis by this depth.
+    insertion_depth: 0.012
+
+    # Where gripper_tcp sits relative to the plug body at the moment of grasp:
+    # top-down wrap of the plug raised on its stand; the pads close onto the
+    # duplex housing walls and the cage cradles it from below. Position tuned
+    # against the measured AG95 wrap geometry.
+    grasp_in_plug: [0.0, 0.0, 0.018, 3.14159, 0.0, 1.5708]
+
+    # Measured plug-tip pose relative to gripper_tcp after the grasp settles
+    # into the cage (calibrated from Gazebo ground truth over repeated runs;
+    # see README "Tuning"). The deterministic insertion alignment uses this
+    # constant, not live ground truth.
+    tip_in_tcp: [0.0001, -0.0066, 0.0457, 3.09, 0.0, 3.14]
+
+    # Plug box attached to gripper_tcp in the planning scene after grasp:
+    # covers the plug tip (the part that enters the port) at the measured
+    # dangling position; small enough not to clip the table.
+    # Disabled by default (attach_plug: false) because the dangling plug's
+    # orientation varies enough that a fixed box hurts planning more than it
+    # helps; enable once the hold is orientation-stable.
+    attach_plug: false
+    plug_box_in_tcp: [0.0, -0.0066, 0.0457, 0.0, 0.0, 0.0]
+    plug_box_size: [0.026, 0.022, 0.012]
+
+    motion:
+      pregrasp_distance: 0.10
+      lift_distance: 0.10
+      preinsert_distance: 0.05
+      preinsert_height: 0.10
+      retreat_distance: 0.10
+      cartesian_step_size: 0.005
+      cartesian_min_fraction: 0.95
+      free_space_velocity_scaling: 0.20
+      approach_velocity_scaling: 0.10
+      insertion_velocity_scaling: 0.03
+      planning_time: 30.0
+      trajectory_timeout: 30.0
+      planning_attempts: 10
+
+    validation:
+      grasp_pose_tolerance: 0.01
+      insertion_pose_tolerance: 0.005
+      pose_timeout: 5.0
+
+    # Allowed-collision pairs added to the planning scene ACM ("link_a:link_b").
+    # NOTE: on this MoveIt version the applied ACM diff replaces the scene's
+    # ACM contents, so this list must also cover the SRDF adjacent/never pairs:
+    # adjacent arm links, gripper links that touch when folded, finger pads vs
+    # the table and robot base vs the table, and the attached plug vs the port.
+    acm_allow:
+      - "world:base_link"
+      - "base_link:base_link_inertia"
+      - "base_link_inertia:shoulder_link"
+      - "shoulder_link:upper_arm_link"
+      - "upper_arm_link:forearm_link"
+      - "forearm_link:wrist_1_link"
+      - "wrist_1_link:wrist_2_link"
+      - "wrist_2_link:wrist_3_link"
+      - "wrist_3_link:tool0"
+      - "wrist_3_link:gripper_base_link"
+      - "tool0:gripper_base_link"
+      - "gripper_tcp:gripper_base_link"
+      - "gripper_base_link:gripper_finger1_knuckle_link"
+      - "gripper_base_link:gripper_finger2_knuckle_link"
+      - "gripper_base_link:gripper_finger1_inner_knuckle_link"
+      - "gripper_base_link:gripper_finger2_inner_knuckle_link"
+      - "gripper_finger1_knuckle_link:gripper_finger1_inner_knuckle_link"
+      - "gripper_finger2_knuckle_link:gripper_finger2_inner_knuckle_link"
+      - "gripper_finger1_inner_knuckle_link:gripper_finger1_finger_link"
+      - "gripper_finger2_inner_knuckle_link:gripper_finger2_finger_link"
+      - "gripper_finger1_inner_knuckle_link:gripper_finger1_finger_tip_link"
+      - "gripper_finger2_inner_knuckle_link:gripper_finger2_finger_tip_link"
+      - "gripper_finger1_finger_link:gripper_finger1_finger_tip_link"
+      - "gripper_finger2_finger_link:gripper_finger2_finger_tip_link"
+      - "gripper_finger1_finger_link:table"
+      - "gripper_finger1_finger_link:stand"
+      - "gripper_finger2_finger_link:stand"
+      - "gripper_finger1_finger_tip_link:stand"
+      - "gripper_finger2_finger_tip_link:stand"
+      - "gripper_base_link:table"
+      - "gripper_finger1_knuckle_link:table"
+      - "gripper_finger2_knuckle_link:table"
+      - "gripper_finger1_inner_knuckle_link:table"
+      - "gripper_finger2_inner_knuckle_link:table"
+      - "gripper_finger2_finger_link:table"
+      - "gripper_finger1_finger_tip_link:table"
+      - "gripper_finger2_finger_tip_link:table"
+      - "gripper_finger1_finger_link:port"
+      - "gripper_finger2_finger_link:port"
+      - "gripper_finger1_finger_tip_link:port"
+      - "gripper_finger2_finger_tip_link:port"
+      - "gripper_finger1_knuckle_link:port"
+      - "gripper_finger2_knuckle_link:port"
+      - "gripper_base_link:port"
+      - "gripper_base_link:stand"
+      - "wrist_3_link:port"
+      - "tool0:port"
+      - "base_link:table"
+      - "base_link_inertia:table"
+      - "plug:port"
+
+    startup:
+      tf_timeout: 10.0
+      move_group_wait: 30.0

@@ -1,0 +1,6 @@
+DH AG95 gripper URDF and visual meshes are from
+https://github.com/DH-Robotics/dh_gripper_ros
+package dh_robotics_ag95_description, maintained by Shelling Ding
+(Renjie.ding@dh-robotics.com).
+
+Those files are licensed under the BSD license included in package.xml.

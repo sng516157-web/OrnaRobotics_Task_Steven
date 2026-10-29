@@ -1,0 +1,8 @@
+SC plug and SC port models, including sc_plug_visual.glb and sc_port_visual.glb,
+are from the public aic_assets package at https://github.com/intrinsic-dev/aic
+(models "SC Plug" and "SC Port", author Cole Biesemeyer).
+
+Those files are licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0

@@ -1,0 +1,12 @@
+Cable insertion sim
+===================
+
+Scripts in this repository are covered by LICENSE (MIT).
+
+Third-party models shipped here keep their own licenses:
+
+- SC plug and SC port meshes: sim/models/NOTICE (Apache-2.0)
+- DH AG95 gripper: sim/dh_ag95/NOTICE (BSD)
+
+The Universal Robots description is installed from ROS packages at runtime
+and is not stored in this repository.

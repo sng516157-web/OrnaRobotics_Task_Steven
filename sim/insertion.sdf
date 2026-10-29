@@ -1,0 +1,118 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="insertion">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <!-- Required for the sc_port_sensor contact sensor; declaring any world
+         plugin suppresses the default server config, so Contact must be explicit. -->
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <!-- Sensors system + overhead debug camera (small, low rate; also the
+         hook point for the future perception extension). -->
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <model name="debug_camera">
+      <static>true</static>
+      <pose>0.33 -0.12 0.80 0 0.20 3.1416</pose>
+      <link name="cam">
+        <sensor name="camera" type="camera">
+          <camera>
+            <horizontal_fov>0.9</horizontal_fov>
+            <image>
+              <width>640</width>
+              <height>480</height>
+            </image>
+            <clip>
+              <near>0.01</near>
+              <far>10</far>
+            </clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>5</update_rate>
+          <topic>/debug_camera</topic>
+        </sensor>
+      </link>
+    </model>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material>
+            <ambient>0.35 0.38 0.35 1</ambient>
+            <diffuse>0.35 0.38 0.35 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="table">
+      <static>true</static>
+      <pose>0.15 0 0.73 0 0 0</pose>
+      <link name="top">
+        <collision name="collision">
+          <geometry><box><size>1.1 0.7 0.04</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.1 0.7 0.04</size></box></geometry>
+          <material>
+            <ambient>0.45 0.32 0.18 1</ambient>
+            <diffuse>0.45 0.32 0.18 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Narrow stand raising the plug 3cm: the AG95's fingers are 10-16cm long
+         and cannot wrap a 7mm-tall plug lying on the flat table (verified
+         geometrically). The stand is narrow enough for the fingers to
+         straddle it while the pads close on the raised plug housing. -->
+    <model name="plug_stand">
+      <static>true</static>
+      <pose>0.22 -0.12 0.765 0 0 0</pose>
+      <link name="post">
+        <collision name="collision">
+          <geometry><box><size>0.015 0.025 0.03</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.015 0.025 0.03</size></box></geometry>
+          <material>
+            <ambient>0.25 0.25 0.28 1</ambient>
+            <diffuse>0.25 0.25 0.28 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <include>
+      <uri>model://sc_port</uri>
+      <name>port</name>
+      <static>true</static>
+      <pose>0.50 0.12 0.76 0 0 0</pose>
+    </include>
+
+    <include>
+      <uri>model://sc_plug</uri>
+      <name>plug</name>
+      <pose>0.22 -0.12 0.785 0 0 0</pose>
+    </include>
+  </world>
+</sdf>
