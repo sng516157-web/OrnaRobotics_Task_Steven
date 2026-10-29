@@ -257,18 +257,6 @@
         </surface>
       </collision>
 
-      <!-- Contact points on the plug housing: used for grasp debugging and an
-           optional extra grasp-validation signal. -->
-      <sensor name="plug_contact" type="contact">
-        <contact>
-          <collision>housing blue_predeterminado005_collider_box</collision>
-          <collision>housing blue_predeterminado005_collider_box.001</collision>
-          <collision>housing blue_predeterminado005_collider_box.002</collision>
-          <collision>housing blue_predeterminado005_collider_box.003</collision>
-          <collision>cube002_collider_box</collision>
-          <topic>/plug_contact</topic>
-        </contact>
-      </sensor>
     </link>
 
     <link name="sc_tip_link">

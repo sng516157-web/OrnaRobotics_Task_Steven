@@ -182,6 +182,11 @@ def setup(context, *_args, **_kwargs):
                 "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
                 f"{task_params['topics']['port_contact']}"
                 "@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
+                "/wide_cam@sensor_msgs/msg/Image[gz.msgs.Image",
+                "/plug_cam@sensor_msgs/msg/Image[gz.msgs.Image",
+                "/port_cam@sensor_msgs/msg/Image[gz.msgs.Image",
+                "/finger1_pad_contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
+                "/finger2_pad_contact@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts",
             ],
             parameters=[common],
             output="screen",
@@ -301,7 +306,21 @@ def setup(context, *_args, **_kwargs):
                 Node(
                     package="rviz2",
                     executable="rviz2",
-                    parameters=[common],
+                    arguments=[
+                        "-d",
+                        os.path.join(
+                            get_package_share_directory("cable_insertion"),
+                            "config",
+                            "cable_insertion.rviz",
+                        ),
+                    ],
+                    parameters=[
+                        {
+                            "robot_description": robot_description,
+                            "robot_description_semantic": robot_description_semantic,
+                        },
+                        common,
+                    ],
                 )
             )
         return nodes

@@ -30,9 +30,13 @@ deterministic_insertion:
       port_pose: [0.50, 0.12, 0.76, 0.0, 0.0, 0.0]
       table_pose: [0.15, 0.0, 0.73, 0.0, 0.0, 0.0]
       table_size: [1.10, 0.70, 0.04]
-      # Narrow stand raising the plug so the AG95's fingers can wrap it.
-      stand_pose: [0.22, -0.12, 0.765, 0.0, 0.0, 0.0]
-      stand_size: [0.015, 0.025, 0.03]
+      # Two posts supporting the plug at its ends (gripper closes between them
+      # at the housing, x=0.22; the open middle gives the fingertips clearance
+      # down to the table).
+      stand_a_pose: [0.206, -0.12, 0.765, 0.0, 0.0, 0.0]
+      stand_a_size: [0.008, 0.025, 0.03]
+      stand_b_pose: [0.231, -0.12, 0.765, 0.0, 0.0, 0.0]
+      stand_b_size: [0.008, 0.025, 0.03]
       # Simplified collision box for the port body (NOT the opening the plug
       # enters; the attached plug is ACM-allowed against it during insertion).
       # A thin plate at the base so the approach to the entrance stays clear.
@@ -50,10 +54,11 @@ deterministic_insertion:
     insertion_depth: 0.012
 
     # Where gripper_tcp sits relative to the plug body at the moment of grasp:
-    # top-down wrap of the plug raised on its stand; the pads close onto the
-    # duplex housing walls and the cage cradles it from below. Position tuned
-    # against the measured AG95 wrap geometry.
-    grasp_in_plug: [0.0, 0.0, 0.018, 3.14159, 0.0, 1.5708]
+    # FINGERTIP grasp — the fingertips (the gripper's lowest point) close on
+    # the duplex housing walls at mid-height, so the gripper bulk rides high
+    # and clears the table during insertion. Fingertips end ~4cm below the TCP
+    # at close; z≈0.04 puts them at the raised plug (0.785).
+    grasp_in_plug: [-0.001, 0.0, 0.075, 3.14159, 0.0, 1.5708]
 
     # Measured plug-tip pose relative to gripper_tcp after the grasp settles
     # into the cage (calibrated from Gazebo ground truth over repeated runs;
@@ -122,10 +127,14 @@ deterministic_insertion:
       - "gripper_finger1_finger_link:gripper_finger1_finger_tip_link"
       - "gripper_finger2_finger_link:gripper_finger2_finger_tip_link"
       - "gripper_finger1_finger_link:table"
-      - "gripper_finger1_finger_link:stand"
-      - "gripper_finger2_finger_link:stand"
-      - "gripper_finger1_finger_tip_link:stand"
-      - "gripper_finger2_finger_tip_link:stand"
+      - "gripper_finger1_finger_link:stand_a"
+      - "gripper_finger2_finger_link:stand_a"
+      - "gripper_finger1_finger_tip_link:stand_a"
+      - "gripper_finger2_finger_tip_link:stand_a"
+      - "gripper_finger1_finger_link:stand_b"
+      - "gripper_finger2_finger_link:stand_b"
+      - "gripper_finger1_finger_tip_link:stand_b"
+      - "gripper_finger2_finger_tip_link:stand_b"
       - "gripper_base_link:table"
       - "gripper_finger1_knuckle_link:table"
       - "gripper_finger2_knuckle_link:table"
@@ -141,7 +150,8 @@ deterministic_insertion:
       - "gripper_finger1_knuckle_link:port"
       - "gripper_finger2_knuckle_link:port"
       - "gripper_base_link:port"
-      - "gripper_base_link:stand"
+      - "gripper_base_link:stand_a"
+      - "gripper_base_link:stand_b"
       - "wrist_3_link:port"
       - "tool0:port"
       - "base_link:table"

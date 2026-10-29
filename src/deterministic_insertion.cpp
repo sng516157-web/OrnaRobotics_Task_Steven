@@ -133,8 +133,10 @@ class DeterministicInsertion : public rclcpp::Node {
     table_size_ = declare_parameter<std::vector<double>>("scene.table_size");
     port_box_pose_ = makeT(declare_parameter<std::vector<double>>("scene.port_box_pose"));
     port_box_size_ = declare_parameter<std::vector<double>>("scene.port_box_size");
-    stand_pose_ = makeT(declare_parameter<std::vector<double>>("scene.stand_pose"));
-    stand_size_ = declare_parameter<std::vector<double>>("scene.stand_size");
+    stand_a_pose_ = makeT(declare_parameter<std::vector<double>>("scene.stand_a_pose"));
+    stand_a_size_ = declare_parameter<std::vector<double>>("scene.stand_a_size");
+    stand_b_pose_ = makeT(declare_parameter<std::vector<double>>("scene.stand_b_pose"));
+    stand_b_size_ = declare_parameter<std::vector<double>>("scene.stand_b_size");
 
     // Constant transforms measured from the model SDFs
     tip_in_plug_ = makeT(declare_parameter<std::vector<double>>("plug_tip_in_plug"));
@@ -180,6 +182,17 @@ class DeterministicInsertion : public rclcpp::Node {
     contact_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
         contact_topic_, 10,
         [this](const ros_gz_interfaces::msg::Contacts::SharedPtr) { contact_seen_ = true; });
+    // Gripper pad contact sensors: the gripper "knowing" it has the plug.
+    pad1_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
+        "/finger1_pad_contact", 10,
+        [this](const ros_gz_interfaces::msg::Contacts::SharedPtr) {
+          pad1_last_contact_ = now().seconds();
+        });
+    pad2_sub_ = create_subscription<ros_gz_interfaces::msg::Contacts>(
+        "/finger2_pad_contact", 10,
+        [this](const ros_gz_interfaces::msg::Contacts::SharedPtr) {
+          pad2_last_contact_ = now().seconds();
+        });
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -428,33 +441,26 @@ class DeterministicInsertion : public rclcpp::Node {
   void setupPlanningScene() {
     namespace mpi = moveit::planning_interface;
 
-    moveit_msgs::msg::CollisionObject table;
-    table.header.frame_id = planning_frame_;
-    table.id = "table";
-    shape_msgs::msg::SolidPrimitive box;
-    box.type = shape_msgs::msg::SolidPrimitive::BOX;
-    box.dimensions.assign(table_size_.begin(), table_size_.end());
-    table.primitives.push_back(box);
-    table.primitive_poses.push_back(toPlanningFrame(table_pose_));
-    table.operation = moveit_msgs::msg::CollisionObject::ADD;
+    auto add_box = [this](const char* id, const tf2::Transform& pose,
+                          const std::vector<double>& size) {
+      moveit_msgs::msg::CollisionObject obj;
+      obj.header.frame_id = planning_frame_;
+      obj.id = id;
+      shape_msgs::msg::SolidPrimitive box;
+      box.type = shape_msgs::msg::SolidPrimitive::BOX;
+      box.dimensions.assign(size.begin(), size.end());
+      obj.primitives.push_back(box);
+      obj.primitive_poses.push_back(toPlanningFrame(pose));
+      obj.operation = moveit_msgs::msg::CollisionObject::ADD;
+      return obj;
+    };
 
-    moveit_msgs::msg::CollisionObject port;
-    port.header.frame_id = planning_frame_;
-    port.id = "port";
-    box.dimensions.assign(port_box_size_.begin(), port_box_size_.end());
-    port.primitives.push_back(box);
-    port.primitive_poses.push_back(toPlanningFrame(port_box_pose_));
-    port.operation = moveit_msgs::msg::CollisionObject::ADD;
-
-    moveit_msgs::msg::CollisionObject stand;
-    stand.header.frame_id = planning_frame_;
-    stand.id = "stand";
-    box.dimensions.assign(stand_size_.begin(), stand_size_.end());
-    stand.primitives.push_back(box);
-    stand.primitive_poses.push_back(toPlanningFrame(stand_pose_));
-    stand.operation = moveit_msgs::msg::CollisionObject::ADD;
-
-    psi_.applyCollisionObjects({table, port, stand});
+    psi_.applyCollisionObjects({
+        add_box("table", table_pose_, table_size_),
+        add_box("port", port_box_pose_, port_box_size_),
+        add_box("stand_a", stand_a_pose_, stand_a_size_),
+        add_box("stand_b", stand_b_pose_, stand_b_size_),
+    });
 
     // ACM: allow the configured pairs (e.g. finger pads vs table, plug vs port).
     moveit_msgs::msg::PlanningScene diff;
@@ -631,16 +637,33 @@ class DeterministicInsertion : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "Gripper commanded to %.3f rad", position);
   }
 
-    // Ramp the close in small steps so the plug self-centers between the pads
-    // instead of being pushed out by the first pad to make contact.
+  bool bothPadsTouching() {
+    const double t = now().seconds();
+    return (t - pad1_last_contact_) < 0.25 && (t - pad2_last_contact_) < 0.25;
+  }
+
+  // Ramp the close in small steps so the plug self-centers between the pads.
+  // Stop as soon as BOTH pad sensors report persistent contact: the gripper
+  // then holds exactly that much close instead of squeezing past the grip
+  // (no integral windup + contact-triggered stop = no over-grip).
   void closeGripperGradual() {
     const double from = pregrasp_gripper_;
     const double to = gripper_close_;
     const int steps = 10;
+    int both_hits = 0;
     for (int i = 1; i <= steps; ++i) {
-      publishGripper(from + (to - from) * i / steps);
+      const double c = from + (to - from) * i / steps;
+      publishGripper(c);
       rclcpp::sleep_for(400ms);
+      both_hits = bothPadsTouching() ? both_hits + 1 : 0;
+      if (both_hits >= 2) {
+        RCLCPP_INFO(get_logger(),
+                    "Both pads in contact at c=%.2f; holding grip (contact-triggered stop).",
+                    c);
+        return;
+      }
     }
+    RCLCPP_INFO(get_logger(), "Pad contact not detected; closed fully to %.2f.", to);
   }
 
   // ---- validation ------------------------------------------------------------
@@ -784,8 +807,10 @@ class DeterministicInsertion : public rclcpp::Node {
   std::string gazebo_frame_, planning_frame_, tcp_frame_;
   std::string gripper_topic_, pose_topic_, contact_topic_;
   double gripper_open_, gripper_close_, gripper_settle_, pregrasp_gripper_;
-  tf2::Transform plug_pose_, port_pose_, table_pose_, port_box_pose_, stand_pose_;
-  std::vector<double> table_size_, port_box_size_, plug_box_size_, stand_size_;
+  tf2::Transform plug_pose_, port_pose_, table_pose_, port_box_pose_;
+  tf2::Transform stand_a_pose_, stand_b_pose_;
+  std::vector<double> table_size_, port_box_size_, plug_box_size_;
+  std::vector<double> stand_a_size_, stand_b_size_;
   tf2::Transform tip_in_plug_, base_in_port_, entrance_in_base_, grasp_in_plug_;
   tf2::Transform tip_in_tcp_;
   tf2::Transform plug_box_in_tcp_;
@@ -808,6 +833,10 @@ class DeterministicInsertion : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr gripper_pub_;
   rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr pose_sub_;
   rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr contact_sub_;
+  rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr pad1_sub_;
+  rclcpp::Subscription<ros_gz_interfaces::msg::Contacts>::SharedPtr pad2_sub_;
+  double pad1_last_contact_ = -100.0;
+  double pad2_last_contact_ = -100.0;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   std::unique_ptr<moveit::planning_interface::MoveGroupInterface> mgi_;

@@ -123,11 +123,49 @@ def add_position_controller(root: ET.Element, joint_name: str) -> None:
     )
     ET.SubElement(plugin, "joint_name").text = joint_name
     ET.SubElement(plugin, "topic").text = f"/gripper/{joint_name}"
-    ET.SubElement(plugin, "p_gain").text = "5"
-    ET.SubElement(plugin, "i_gain").text = "0.2"
+    ET.SubElement(plugin, "p_gain").text = "3"
+    ET.SubElement(plugin, "i_gain").text = "0"
     ET.SubElement(plugin, "d_gain").text = "1.0"
     ET.SubElement(plugin, "cmd_max").text = "2"
     ET.SubElement(plugin, "cmd_min").text = "-2"
+
+
+# One pad sensor per finger: a contact sensor on the pad link plus a thin
+# VISUAL patch (no collision) so viewers can see the sensor surface.
+PAD_SENSORS = {
+    "gripper_finger1_finger_link": ("/finger1_pad_contact", 1.0),
+    "gripper_finger2_finger_link": ("/finger2_pad_contact", -1.0),
+}
+PATCH_COLOR = "1 0.55 0.1 1"
+
+
+def add_pad_sensor(root: ET.Element, link_name: str, topic: str, mirror: float) -> None:
+    link = root.find(f"link[@name='{link_name}']")
+    if link is None:
+        raise SystemExit(f"DH gripper URDF is missing link {link_name}.")
+
+    # Cosmetic thin rectangle on the pad's inner contact face (no collision).
+    visual = ET.SubElement(link, "visual", {"name": "pad_sensor_patch"})
+    ET.SubElement(visual, "origin", {
+        "xyz": f"{0.022 * mirror:.3f} 0 0.014",
+        "rpy": "0 0 0",
+    })
+    ET.SubElement(visual, "geometry").append(ET.Element("box"))
+    box = visual.find("geometry/box")
+    ET.SubElement(box, "size").text = "0.002 0.018 0.022"
+    material = ET.SubElement(visual, "material", {"name": "pad_sensor"})
+    ET.SubElement(material, "color", {"rgba": PATCH_COLOR})
+
+    # Contact sensor bound to the pad's collision.
+    gazebo = ET.SubElement(root, "gazebo", {"reference": link_name})
+    sensor = ET.SubElement(gazebo, "sensor", {
+        "name": f"{link_name}_pad_contact", "type": "contact",
+    })
+    ET.SubElement(sensor, "always_on").text = "1"
+    ET.SubElement(sensor, "update_rate").text = "50"
+    contact = ET.SubElement(sensor, "contact")
+    ET.SubElement(contact, "collision").text = f"{link_name}_collision"
+    ET.SubElement(contact, "topic").text = topic
 
 
 def ensure_world_link(root: ET.Element) -> None:
@@ -265,6 +303,9 @@ def attach(
         ET.SubElement(tag, "mu1").text = CONTACT_MU
         ET.SubElement(tag, "mu2").text = CONTACT_MU
         ET.SubElement(tag, "kp").text = CONTACT_KP
+
+    for link_name, (topic, mirror) in PAD_SENSORS.items():
+        add_pad_sensor(root, link_name, topic, mirror)
 
     if ros2_control is not None:
         add_ros2_control(root, ros2_control)

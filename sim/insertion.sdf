@@ -17,6 +17,60 @@
       <render_engine>ogre2</render_engine>
     </plugin>
 
+    <!-- Four static cameras: wide workspace view, plug-stand close-up, port
+         close-up, and a tuning close-up. The wide/plug/port feeds are bridged
+         to ROS for RViz and are the hook for the future perception extension. -->
+    <model name="wide_cam">
+      <static>true</static>
+      <pose>0.35 -0.55 1.45 0 0.91 1.5708</pose>
+      <link name="cam">
+        <sensor name="camera" type="camera">
+          <camera>
+            <horizontal_fov>0.9</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.01</near><far>10</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>5</update_rate>
+          <topic>/wide_cam</topic>
+        </sensor>
+      </link>
+    </model>
+
+    <model name="plug_cam">
+      <static>true</static>
+      <pose>0.30 -0.12 0.82 0 0.12 3.1416</pose>
+      <link name="cam">
+        <sensor name="camera" type="camera">
+          <camera>
+            <horizontal_fov>0.7</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.01</near><far>10</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>5</update_rate>
+          <topic>/plug_cam</topic>
+        </sensor>
+      </link>
+    </model>
+
+    <model name="port_cam">
+      <static>true</static>
+      <pose>0.52 0.16 1.15 0 1.457 -2.034</pose>
+      <link name="cam">
+        <sensor name="camera" type="camera">
+          <camera>
+            <horizontal_fov>0.7</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.01</near><far>10</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <update_rate>5</update_rate>
+          <topic>/port_cam</topic>
+        </sensor>
+      </link>
+    </model>
+
     <model name="debug_camera">
       <static>true</static>
       <pose>0.33 -0.12 0.80 0 0.20 3.1416</pose>
@@ -24,14 +78,8 @@
         <sensor name="camera" type="camera">
           <camera>
             <horizontal_fov>0.9</horizontal_fov>
-            <image>
-              <width>640</width>
-              <height>480</height>
-            </image>
-            <clip>
-              <near>0.01</near>
-              <far>10</far>
-            </clip>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.01</near><far>10</far></clip>
           </camera>
           <always_on>1</always_on>
           <update_rate>5</update_rate>
@@ -81,19 +129,35 @@
       </link>
     </model>
 
-    <!-- Narrow stand raising the plug 3cm: the AG95's fingers are 10-16cm long
-         and cannot wrap a 7mm-tall plug lying on the flat table (verified
-         geometrically). The stand is narrow enough for the fingers to
-         straddle it while the pads close on the raised plug housing. -->
-    <model name="plug_stand">
+    <!-- Two posts supporting the plug under its body (rear block and housing
+         front) so it rests level. The gripper closes between them at the
+         housing with the fingertips, which ride high above the table. -->
+    <model name="plug_stand_a">
       <static>true</static>
-      <pose>0.22 -0.12 0.765 0 0 0</pose>
+      <pose>0.206 -0.12 0.765 0 0 0</pose>
       <link name="post">
         <collision name="collision">
-          <geometry><box><size>0.015 0.025 0.03</size></box></geometry>
+          <geometry><box><size>0.008 0.025 0.03</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.015 0.025 0.03</size></box></geometry>
+          <geometry><box><size>0.008 0.025 0.03</size></box></geometry>
+          <material>
+            <ambient>0.25 0.25 0.28 1</ambient>
+            <diffuse>0.25 0.25 0.28 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="plug_stand_b">
+      <static>true</static>
+      <pose>0.231 -0.12 0.765 0 0 0</pose>
+      <link name="post">
+        <collision name="collision">
+          <geometry><box><size>0.008 0.025 0.03</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.008 0.025 0.03</size></box></geometry>
           <material>
             <ambient>0.25 0.25 0.28 1</ambient>
             <diffuse>0.25 0.25 0.28 1</diffuse>
