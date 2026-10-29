@@ -130,33 +130,33 @@ def add_position_controller(root: ET.Element, joint_name: str) -> None:
     ET.SubElement(plugin, "cmd_min").text = "-2"
 
 
-# One pad sensor per finger: a contact sensor on the pad link plus a thin
-# VISUAL patch (no collision) so viewers can see the sensor surface.
+# One pad sensor per FINGERTIP: the plug is pinched by the distal phalanges
+# (finger_tip_link), so both the contact sensor and the visual patch belong
+# there. Thin orange patch is VISUAL ONLY (no collision) to show the sensor.
 PAD_SENSORS = {
-    "gripper_finger1_finger_link": ("/finger1_pad_contact", 1.0),
-    "gripper_finger2_finger_link": ("/finger2_pad_contact", -1.0),
+    "gripper_finger1_finger_tip_link": "/finger1_pad_contact",
+    "gripper_finger2_finger_tip_link": "/finger2_pad_contact",
 }
 PATCH_COLOR = "1 0.55 0.1 1"
 
 
-def add_pad_sensor(root: ET.Element, link_name: str, topic: str, mirror: float) -> None:
+def add_pad_sensor(root: ET.Element, link_name: str, topic: str) -> None:
     link = root.find(f"link[@name='{link_name}']")
     if link is None:
         raise SystemExit(f"DH gripper URDF is missing link {link_name}.")
 
-    # Cosmetic thin rectangle on the pad's inner contact face (no collision).
+    # Cosmetic thin rectangle on the fingertip's inner contact face (the
+    # distal mesh spans x in [-0.0075, 0.0262]; the inner/contact face is the
+    # +x side, toward the gripper center). No collision geometry.
     visual = ET.SubElement(link, "visual", {"name": "pad_sensor_patch"})
-    ET.SubElement(visual, "origin", {
-        "xyz": f"{0.022 * mirror:.3f} 0 0.014",
-        "rpy": "0 0 0",
-    })
-    ET.SubElement(visual, "geometry").append(ET.Element("box"))
-    box = visual.find("geometry/box")
-    ET.SubElement(box, "size").text = "0.002 0.018 0.022"
+    ET.SubElement(visual, "origin", {"xyz": "0.028 0 0.008", "rpy": "0 0 0"})
+    geom = ET.SubElement(visual, "geometry")
+    box = ET.SubElement(geom, "box")
+    ET.SubElement(box, "size").text = "0.003 0.012 0.024"
     material = ET.SubElement(visual, "material", {"name": "pad_sensor"})
     ET.SubElement(material, "color", {"rgba": PATCH_COLOR})
 
-    # Contact sensor bound to the pad's collision.
+    # Contact sensor bound to the fingertip's collision.
     gazebo = ET.SubElement(root, "gazebo", {"reference": link_name})
     sensor = ET.SubElement(gazebo, "sensor", {
         "name": f"{link_name}_pad_contact", "type": "contact",
@@ -304,8 +304,8 @@ def attach(
         ET.SubElement(tag, "mu2").text = CONTACT_MU
         ET.SubElement(tag, "kp").text = CONTACT_KP
 
-    for link_name, (topic, mirror) in PAD_SENSORS.items():
-        add_pad_sensor(root, link_name, topic, mirror)
+    for link_name, topic in PAD_SENSORS.items():
+        add_pad_sensor(root, link_name, topic)
 
     if ros2_control is not None:
         add_ros2_control(root, ros2_control)
