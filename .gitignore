@@ -12,3 +12,6 @@ Thumbs.db
 
 .env
 .env.*
+
+# Steven's local notes — not for publication
+DEVELOPMENT_PROCESS.md
