@@ -15,3 +15,6 @@ Thumbs.db
 
 # Steven's local notes — not for publication
 DEVELOPMENT_PROCESS.md
+# Local diagram generator + render
+docs/architecture_diagram.py
+docs/architecture.png
