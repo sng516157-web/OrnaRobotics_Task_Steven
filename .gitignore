@@ -18,3 +18,5 @@ DEVELOPMENT_PROCESS.md
 # Local diagram generator + render
 docs/architecture_diagram.py
 docs/architecture.png
+# Local speech notes
+ROS_OVERVIEW.md
